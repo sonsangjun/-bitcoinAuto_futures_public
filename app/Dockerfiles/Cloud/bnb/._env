@@ -1,0 +1,5 @@
+iscloud=true
+logBasePath=/home/{yourAccout}/
+targetSymbol=BNBUSDT
+devport=18102
+realport=8102

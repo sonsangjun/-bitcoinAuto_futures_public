@@ -1,0 +1,34 @@
+// express setting
+const express = require('express');
+
+const dealService = require('../service/dealService');
+const errSvc = require('../service/errorLogService');
+const logger = require('../conf/winston');
+
+const objUtil = require('../util/objectUtil');
+const jsonUtil = require('../util/jsonUtil');
+
+module.exports = (async ()=>{
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+    // 서버 최초 기동시 동작시킬 서비스 정의
+    ////////////////////////////////////////////////////////////////////////////////////////////////////
+    logger.debug('autoStartService processing start.');
+    const jsonObj = jsonUtil.getJsonObj('autoStartService');
+
+    try{
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+        // dealService defined
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+        logger.debug('autoStartService-dealService processing start.');
+        await dealService.init();
+        await dealService.run();
+        logger.debug('autoStartService-dealService complete.');
+
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+        // 이후 추가할 것.
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+    
+    }catch(e){
+        errSvc.insertErrorCntn(jsonObj.getMsgJson('-1',objUtil.objView(e)));
+    }
+})();

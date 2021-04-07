@@ -1,0 +1,5 @@
+iscloud=true
+logBasePath=/home/{yourAccout}/
+targetSymbol=BTCUSDT
+devport=18101
+realport=8101
