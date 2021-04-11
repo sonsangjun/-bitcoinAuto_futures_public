@@ -234,6 +234,19 @@ module.exports = (function(){
                 return logger.debug(['success Clearing Position.==>ID:',resOfSb[resOfSb.length-1].orderId,', price',resOfSb[resOfSb.length-1].price].join(''));
             }
 
+            // ableBalance체크, 가용할 마진이 없는 경우 --> 가장 가격이 낮은 포지션부터 청산처리
+            if(!svcObj.checkAbleShort(0)){
+                if(!(resOfSb && resOfSb.length > 0)){
+                    return logger.debug('none ableBalanceMargin, so Clearing -->  But, empty in sbHistory');
+                }
+                
+                logger.debug('You cannot hold a short position due to insufficient balance.');
+                resOfOrdring = await svcObj.prcsLongOrder(dealSet.symbol, [resOfSb[resOfSb.length-1]], true);
+                await sqlFuObj.deleteFuturesSbHistory(resOfOrdring.clientOrderId, resOfOrdring.orderId);
+                
+                return logger.debug(['success Clearing Position.==>ID:',resOfSb[resOfSb.length-1].orderId,', price',resOfSb[resOfSb.length-1].price].join(''));
+            }
+
             // 거래시작 -- 일반거래
             // 처리되지 않은 L/S가 없을경우
             if(!(resOfOldTr && resOfOldTr.length > 0)){
@@ -589,7 +602,7 @@ module.exports = (function(){
                 });
         
                 if(arr.length > 10){
-                    arrStr += '...(Omitted below)\n';
+                    arrStr += ['...(Omitted below, ',(arr.length - maxCnt),' more.)\n'].join('');
                 }
         
                 avgP = totAmt/totQty;
@@ -648,6 +661,8 @@ module.exports = (function(){
         const _fundingFee = (totalFundingFee ? totalFundingFee : 0);
         const _symEvalRate = (symbolMarginBalance ? (symbolUnrealizedProfit/symbolMarginBalance) : 0);
 
+        const _totalPf = (symbolRealizeProfit + _fundingFee + symbolUnrealizedProfit).toFixed(dealSet.floatFixed);
+
         return ([
             '\n', bConst.HR
            ,'\n','[', 'TotalCurAccoutInfo, Unit:$]'                   
@@ -656,7 +671,7 @@ module.exports = (function(){
            ,'\n',' ',('TotMaint').padEnd(titlePad,' ')              ,': ' , totalMaintenceMargin.toFixed(dealSet.floatFixed).padEnd(detailPad,' ')               ,', ',('TotBanlce').padEnd(titlePad,' ') ,': ' , totalMarginBalance.toFixed(dealSet.floatFixed).padEnd(detailPad,' ')                                              , ', ', ('MaginRate').padEnd(titlePad,' ') ,': ' , [svcObj.getMarginRate().toFixed(dealSet.viewFixed),'% / ',dealSet.F_ClearMarginRate.toFixed(dealSet.viewFixed),'%'].join('').padEnd(detailPad,' ')
            ,'\n',' '
            ,'\n', bConst.HR
-           ,'\n','[', 'SymbolCurAccoutInfo, TargetCoin: '+dealSet.symbol+', Unit: $, marginType: ',dealSet.F_MarginType,', leverage: ',dealSet.F_Leverage,']'           
+           ,'\n','[', 'SymbolCurAccoutInfo, TargetCoin: '+dealSet.symbol+', Unit: $, marginType: ',dealSet.F_MarginType,', leverage: ',dealSet.F_Leverage,', F_PR: ',dealSet.F_PositionRate,'%]'           
            ,'\n',' ',('pos(coin)').padEnd(titlePad,' ') ,': ',svcObj.getHavingcoin().toFixed(dealSet.floatFixed).padEnd(detailPad,' '),                                          ', ' , ('PosAmt').padEnd(titlePad,' ') , ': ', (symbolMarginBalance*dealSet.F_Leverage).toFixed(dealSet.floatFixed)
            ,'\n',' ',('AbleMagin').padEnd(titlePad,' ')                ,': ' , (availableBalance * svcObj.getCurrentWeight()).toFixed(dealSet.floatFixed).padEnd(detailPad,' ') ,', ' , ('symMagin').padEnd(titlePad,' ') , ': ', symbolMarginBalance.toFixed(dealSet.floatFixed).padEnd(detailPad,' ')
                                    
@@ -665,7 +680,9 @@ module.exports = (function(){
             )
                                    
             ,'\n',' ',('FundFeePf').padEnd(titlePad,' '), ': ', _fundingFee.toFixed(dealSet.floatFixed).padEnd(detailPad,' ') , ', ',('TotEvPf').padEnd(titlePad,' ')                 ,': ',((symbolUnrealizedProfit+_fundingFee).toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')            ,', ',('TotEvPf(%)').padEnd(titlePad,' ') , ': ', [(_symEvalRate).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' ')
-            ,'\n',' ',('TRealPf').padEnd(titlePad,' ')    ,': ' ,(symbolRealizeProfit.toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')                                            ,', ',('TRealPf(%)').padEnd(titlePad,' ') ,': ',[(100*(symbolRealizeProfit)/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' '),'\n'
+            ,'\n',' ',('TRealPf').padEnd(titlePad,' ')    ,': ' ,(symbolRealizeProfit.toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')                                            ,', ',('TRealPf(%)').padEnd(titlePad,' ') ,': ',[(100*(symbolRealizeProfit)/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' ')
+            ,'\n', bConst.HR
+            ,'\n',' ',('TotalPf').padEnd(titlePad,' ')    ,': ' ,_totalPf.padEnd(detailPad,' ')                                            ,', ',('TotalPf(%)').padEnd(titlePad,' ') ,': ',[(100*(_totalPf)/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' '),'\n'
         ].join(''));
     };
 
@@ -675,6 +692,7 @@ module.exports = (function(){
             logger.debug('viewOldHistoryWithDB select result.length :' + result.length);
 
             const innerFixed = 1;
+            const maxCnt = 10;
 
             let totQty = 0;
             let totProfit = 0;
@@ -688,15 +706,15 @@ module.exports = (function(){
                     totQty += obj.sbQty;
                     totProfit += obj.profit;
 
-                    if(idx < 10){
+                    if(idx < maxCnt){
                         totalMsg += '[' + obj.innerAccNo + ', ' + obj.descrition + ', '.concat(objUtil.getYYYYMMDD(obj.sellTime), '.', objUtil.getHHMMSS(obj.sellTime)) + ']: '
                             + obj.buyPrice.toFixed(innerFixed) + '/' + obj.sellPrice.toFixed(innerFixed) + '(' + obj.profitRate.toFixed(dealSet.floatFixed) + '), ' + obj.sbQty.toFixed(dealSet.floatFixed) + ', ' + obj.profit + '\n';
                     }
                 });
             }
 
-            if(result.length > 10){
-                totalMsg += '...(Omitted below)\n';
+            if(result.length > maxCnt){
+                totalMsg += ['...(Omitted below, ',(result.length-maxCnt),' more.)\n'].join('');
             }
 
             logger.debug(totalMsg);
