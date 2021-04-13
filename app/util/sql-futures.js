@@ -63,12 +63,12 @@ module.exports = (function(){
     };
 
     /**
-     * 보유중인 포지션 목록 가져오기
+     * 보유중인 포지션 목록 가져오기 (거래시간 기준)
      * @param {any} symbol 거래심볼
      * @param {any} tradeType 거래타입(B/S)
      * @param {any} startTime [선택]시작시간
      * @param {any} endTime [선택]종료시간
-     * @param {any} orderby [선택]소팅순서, 기본 DESC
+     * @param {any} orderby [선택]소팅순서, 기본 DESC (소팅기준 : 거래시간)
      * @returns 
      */
     sqlObj.selectFuturesSbHistory = function(symbol, tradeType, startTime, endTime, orderby){
@@ -85,6 +85,33 @@ module.exports = (function(){
         else {queryStr += ' order by transactTime desc ' };
 
         logger.info('[selectFuturesSbHistory] query : '+queryStr);
+
+        return queryPromise(queryStr);
+    };
+
+    /**
+     * 보유중인 포지션 목록 가져오기 (가격기준)
+     * @param {any} symbol 거래심볼
+     * @param {any} tradeType 거래타입(B/S)
+     * @param {any} startTime [선택]시작시간
+     * @param {any} endTime [선택]종료시간
+     * @param {any} orderby [선택]소팅순서, 기본 DESC (소팅기준 : 거래시간)
+     * @returns 
+     */
+     sqlObj.selectFuturesSbHistoryWithPrice = function(symbol, tradeType, startTime, endTime, orderby){
+        let queryStr = 'select * from futures_sb_history where del="N" '
+
+        if(tradeType){ queryStr += 'and tradeType="'+tradeType+'" '}
+
+        if(symbol){ queryStr += 'and symbol="'+symbol+'" ' }
+
+        if(startTime){ queryStr += 'and transactTime > '+startTime; }
+        if(endTime){ queryStr += 'and transactTime < '+endTime; }
+
+        if(orderby && orderby.toUpperCase() =='ASC'){ queryStr += ' order by price asc ' }
+        else {queryStr += ' order by price desc ' };
+
+        logger.info('[selectFuturesSbHistoryWithPrice] query : '+queryStr);
 
         return queryPromise(queryStr);
     };

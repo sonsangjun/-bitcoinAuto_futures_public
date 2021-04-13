@@ -234,6 +234,19 @@ module.exports = (function(){
                 return logger.debug(['success Clearing Position.==>ID:',resOfSb[resOfSb.length-1].orderId,', price',resOfSb[resOfSb.length-1].price].join(''));
             }
 
+            // ableBalance체크, 가용할 마진이 없는 경우 --> 가장 가격이 낮은 포지션부터 청산처리
+            if(!svcObj.checkAbleShort(0)){
+                if(!(resOfSb && resOfSb.length > 0)){
+                    return logger.debug('none ableBalanceMargin, so Clearing -->  But, empty in sbHistory');
+                }
+                
+                logger.debug('You cannot hold a short position due to insufficient balance.');
+                resOfOrdring = await svcObj.prcsLongOrder(dealSet.symbol, [resOfSb[resOfSb.length-1]], true);
+                await sqlFuObj.deleteFuturesSbHistory(resOfOrdring.clientOrderId, resOfOrdring.orderId);
+                
+                return logger.debug(['success Clearing Position.==>ID:',resOfSb[resOfSb.length-1].orderId,', price',resOfSb[resOfSb.length-1].price].join(''));
+            }
+
             // 거래시작 -- 일반거래
             // 처리되지 않은 L/S가 없을경우
             if(!(resOfOldTr && resOfOldTr.length > 0)){
@@ -248,7 +261,7 @@ module.exports = (function(){
             // 매매 시그널에 따른 Long/Short구분 및 진행
             if(signal==dealSet.tradeType.BUY){
                 //// Buy(Long)
-                resOfOrdring = await svcObj.prcsLongOrder(dealSet.symbol, resOfSb, false);
+                resOfOrdring = await svcObj.prcsLongOrderOfStd(dealSet.symbol);
                 await sqlFuObj.deleteFuturesSbHistory(resOfOrdring.clientOrderId, resOfOrdring.orderId);
                 await sqlFuObj.deleteFuturesSpotTradingHistory(oldTr.clientOrderId, oldTr.tradeTime);
                 
@@ -589,7 +602,7 @@ module.exports = (function(){
                 });
         
                 if(arr.length > 10){
-                    arrStr += '...(Omitted below)\n';
+                    arrStr += ['...(Omitted below, ',(arr.length - maxCnt),' more.)\n'].join('');
                 }
         
                 avgP = totAmt/totQty;
@@ -648,6 +661,8 @@ module.exports = (function(){
         const _fundingFee = (totalFundingFee ? totalFundingFee : 0);
         const _symEvalRate = (symbolMarginBalance ? (symbolUnrealizedProfit/symbolMarginBalance) : 0);
 
+        const _totalPf = (symbolRealizeProfit + _fundingFee + symbolUnrealizedProfit).toFixed(dealSet.floatFixed);
+
         return ([
             '\n', bConst.HR
            ,'\n','[', 'TotalCurAccoutInfo, Unit:$]'                   
@@ -656,7 +671,7 @@ module.exports = (function(){
            ,'\n',' ',('TotMaint').padEnd(titlePad,' ')              ,': ' , totalMaintenceMargin.toFixed(dealSet.floatFixed).padEnd(detailPad,' ')               ,', ',('TotBanlce').padEnd(titlePad,' ') ,': ' , totalMarginBalance.toFixed(dealSet.floatFixed).padEnd(detailPad,' ')                                              , ', ', ('MaginRate').padEnd(titlePad,' ') ,': ' , [svcObj.getMarginRate().toFixed(dealSet.viewFixed),'% / ',dealSet.F_ClearMarginRate.toFixed(dealSet.viewFixed),'%'].join('').padEnd(detailPad,' ')
            ,'\n',' '
            ,'\n', bConst.HR
-           ,'\n','[', 'SymbolCurAccoutInfo, TargetCoin: '+dealSet.symbol+', Unit: $, marginType: ',dealSet.F_MarginType,', leverage: ',dealSet.F_Leverage,']'           
+           ,'\n','[', 'SymbolCurAccoutInfo, TargetCoin: '+dealSet.symbol+', Unit: $, marginType: ',dealSet.F_MarginType,', leverage: ',dealSet.F_Leverage,', F_PR: ',dealSet.F_PositionRate,'%]'           
            ,'\n',' ',('pos(coin)').padEnd(titlePad,' ') ,': ',svcObj.getHavingcoin().toFixed(dealSet.floatFixed).padEnd(detailPad,' '),                                          ', ' , ('PosAmt').padEnd(titlePad,' ') , ': ', (symbolMarginBalance*dealSet.F_Leverage).toFixed(dealSet.floatFixed)
            ,'\n',' ',('AbleMagin').padEnd(titlePad,' ')                ,': ' , (availableBalance * svcObj.getCurrentWeight()).toFixed(dealSet.floatFixed).padEnd(detailPad,' ') ,', ' , ('symMagin').padEnd(titlePad,' ') , ': ', symbolMarginBalance.toFixed(dealSet.floatFixed).padEnd(detailPad,' ')
                                    
@@ -664,8 +679,11 @@ module.exports = (function(){
                        : ['\n',' ',('curPrice').padEnd(titlePad,' ') ,': ' , (curPrice).toFixed(dealSet.floatFixed)].join('')
             )
                                    
-            ,'\n',' ',('FundFeePf').padEnd(titlePad,' '), ': ', _fundingFee.toFixed(dealSet.floatFixed).padEnd(detailPad,' ') , ', ',('TotEvPf').padEnd(titlePad,' ')                 ,': ',((symbolUnrealizedProfit+_fundingFee).toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')            ,', ',('TotEvPf(%)').padEnd(titlePad,' ') , ': ', [(_symEvalRate).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' ')
-            ,'\n',' ',('TRealPf').padEnd(titlePad,' ')    ,': ' ,(symbolRealizeProfit.toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')                                            ,', ',('TRealPf(%)').padEnd(titlePad,' ') ,': ',[(100*(symbolRealizeProfit)/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' '),'\n'
+            ,'\n',' ',('FundFeePf').padEnd(titlePad,' '), ': ', _fundingFee.toFixed(dealSet.floatFixed).padEnd(detailPad,' ') , ', ',('FFeePf(%)').padEnd(titlePad,' ')    ,': ' ,[((100*_fundingFee/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed)),'%'].join('').padEnd(detailPad,' ')
+            ,'\n',' ',('TotEvPf').padEnd(titlePad,' ')                 ,': ',((symbolUnrealizedProfit+_fundingFee).toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')            ,', ',('TotEvPf(%)').padEnd(titlePad,' ') , ': ', [(_symEvalRate).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' ')
+            ,'\n',' ',('TRealPf').padEnd(titlePad,' ')    ,': ' ,(symbolRealizeProfit.toFixed(dealSet.floatFixed)).padEnd(detailPad,' ')                                            ,', ',('TRealPf(%)').padEnd(titlePad,' ') ,': ',[(100*(symbolRealizeProfit)/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' ')
+            ,'\n', bConst.HR
+            ,'\n',' ',('TotalPf').padEnd(titlePad,' ')    ,': ' ,_totalPf.padEnd(detailPad,' ')                                            ,', ',('TotalPf(%)').padEnd(titlePad,' ') ,': ',[(100*(_totalPf)/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.floatFixed),'%'].join('').padEnd(detailPad,' '),'\n'
         ].join(''));
     };
 
@@ -675,6 +693,7 @@ module.exports = (function(){
             logger.debug('viewOldHistoryWithDB select result.length :' + result.length);
 
             const innerFixed = 1;
+            const maxCnt = 10;
 
             let totQty = 0;
             let totProfit = 0;
@@ -688,15 +707,15 @@ module.exports = (function(){
                     totQty += obj.sbQty;
                     totProfit += obj.profit;
 
-                    if(idx < 10){
+                    if(idx < maxCnt){
                         totalMsg += '[' + obj.innerAccNo + ', ' + obj.descrition + ', '.concat(objUtil.getYYYYMMDD(obj.sellTime), '.', objUtil.getHHMMSS(obj.sellTime)) + ']: '
                             + obj.buyPrice.toFixed(innerFixed) + '/' + obj.sellPrice.toFixed(innerFixed) + '(' + obj.profitRate.toFixed(dealSet.floatFixed) + '), ' + obj.sbQty.toFixed(dealSet.floatFixed) + ', ' + obj.profit + '\n';
                     }
                 });
             }
 
-            if(result.length > 10){
-                totalMsg += '...(Omitted below)\n';
+            if(result.length > maxCnt){
+                totalMsg += ['...(Omitted below, ',(result.length-maxCnt),' more.)\n'].join('');
             }
 
             logger.debug(totalMsg);
@@ -724,18 +743,83 @@ module.exports = (function(){
     };
 
     /**
-     * 롱 Order 처리
+     * 기본 거래시 표준 Long Order 처리
+     * @param {any} symbol 거래심볼
+     */
+    svcObj.prcsLongOrderOfStd = function(symbol){
+        return new Promise(async (resolve, reject)=>{
+            // 잔여 Short 확인
+            try{
+                logger.debug('prcsLongOrderOfStd call');
+
+                const resOfSbTrTime = await sqlFuObj.selectFuturesSbHistory(dealSet.symbol);
+                const resOfSbPrice  = await sqlFuObj.selectFuturesSbHistoryWithPrice(dealSet.symbol);
+
+                // 잔여 Short이 없는 경우.
+                if(!(resOfSbTrTime && resOfSbTrTime.length > 0)){
+                    return reject(jsonObj.getMsgJson('0','target short empty.'));    
+                }
+
+                const sbTrTime = resOfSbTrTime[0]; // 가장 최근데이터
+                const sbPrice =  resOfSbPrice[0];  // 가장 높은가격데이터
+
+                const signalOfTrTime = svcObj.chkLongSignal('signalOfTrTime', curPrice, sbTrTime.price, sbTrTime.spotProfitRate);
+                const signalOfPrice  = svcObj.chkLongSignal('signalOfPrice ', curPrice, sbPrice.price,  sbPrice.spotProfitRate);
+
+                let resOfOrder = {};
+
+                console.warn('sbTrTime',sbTrTime);
+                console.warn('sbPrice',sbPrice);
+
+                // 현재가격대비 현물수익보다 높은지체크
+                if(signalOfTrTime){
+                    resOfOrder = await svcObj.prcsLongOrder(symbol, [sbTrTime]);
+                    resolve(resOfOrder);
+
+                }else if(signalOfPrice){
+                    resOfOrder = await svcObj.prcsLongOrder(symbol, [sbPrice]);
+                    resolve(resOfOrder);
+
+                }else{
+                    reject(jsonObj.getMsgJson('-1','prcsLongOrderOfStd fail.'));    
+                }
+
+            }catch(err){
+                errSvc.insertErrorCntn(jsonObj.getMsgJson('-1',err));
+                reject(jsonObj.getMsgJson('-1',err));
+            }
+        });
+    };
+
+    /**
+     * 목표 등락률이 도달했는지 체크
+     * @param {String} title    체크 제목
+     * @param {Number} curPrice 현재가격
+     * @param {Number} stdPrice SB가격
+     * @param {Number} spotProfitRate 목표 롱 등락률
+     */
+    svcObj.chkLongSignal = function(title, curPrice, stdPrice, spotProfitRate){
+        const curProfitRate = (-1)*(((curPrice-stdPrice)/stdPrice)*100).toFixed(dealSet.floatFixed);
+        if(!(curProfitRate > spotProfitRate)){
+            logger.debug([title,'==>dont reach goal shortProfitRate. std:',spotProfitRate,', cur:',curProfitRate].join(''));
+            return false;
+        }
+
+        logger.debug([title, '==>reach goal shortProfitRate. std:',spotProfitRate,', cur:',curProfitRate].join(''));
+        return true;
+    };
+
+    /**
+     * Long Order 처리
      * @param {any} symbol 거래심볼
      * @param {any} resOfSb 진입포지션 목록
      * @param {any} isClearing 위험도에 따른 청산거래여부
      * @returns 
      */
     svcObj.prcsLongOrder = function(symbol, resOfSb, isClearing){
-        return new Promise(async(resolve, reject)=>{
+        return new Promise(async (resolve, reject)=>{
             // 잔여 Short 확인
             try{
-                let msg = '';                           
-
                 // 잔여 Short이 없는 경우.
                 if(!(resOfSb && resOfSb.length > 0)){
                     return reject(jsonObj.getMsgJson('0','target short empty.'));    
@@ -743,7 +827,6 @@ module.exports = (function(){
 
                 // 잔여 Short이 있는 경우.
                 const lowPriceSb = resOfSb[0];
-                const stdProfitRate = lowPriceSb.spotProfitRate;
                 const quantity = lowPriceSb.qty;
                 const clientOrderId = lowPriceSb.clientOrderId;
                 const orderId = lowPriceSb.orderId;
@@ -752,17 +835,8 @@ module.exports = (function(){
                 const side = dealSet.order.BUY;
                 const tradeType = dealSet.tradeType.BUY;
 
-                // Short 수익률계산이므로 부호반전(-) 처리
-                const stdPrice = lowPriceSb.price;
-                const curProfitRate = (-1)*(((curPrice-stdPrice)/stdPrice)*100).toFixed(dealSet.floatFixed);
-
-                // 현재가격대비 현물수익 * 레버리지보다 높은지체크
-                if(!isClearing){
-                    if(!(curProfitRate > stdProfitRate)){
-                        msg = {code : '0', msg : ['dont reach goal shortProfitRate. std:',stdProfitRate,', cur:',curProfitRate].join('')}
-                        logger.debug(objUtil.objView(msg));
-                        return resolve(msg);
-                    }
+                if(isClearing){
+                    logger.debug('prcsLongOrder Clearing Buy!');
                 }
 
                 // 높다면 Long으로 Short청산처리
@@ -1401,7 +1475,12 @@ module.exports = (function(){
                             slackUtil.makeSlackMsgOfSingle(
                                 bConst.SLACK.TYPE.INFO, 
                                 slackUtil.setSlackTitle('fundingFee income', true),
-                                ['incomeType:',_obj.incomeType,'\nasset:',_obj.asset,'\nfee:',_obj.income,'\nTotalFee:',totalFundingFee].join('')
+                                ['incomeType:',_obj.incomeType,
+                                 '\nasset:'   ,_obj.asset,
+                                 '\nfee:'     ,Number(_obj.income).toFixed(dealSet.viewFixed),
+                                 '\nTotalFee:',Number(totalFundingFee).toFixed(dealSet.viewFixed),,
+                                 '\nTotalFeePrf(%):',(100*totalFundingFee/(dealSet.initAccUsdt*svcObj.getCurrentWeight())).toFixed(dealSet.viewFixed),'%'
+                                ].join('')
                             )
                         );
                     }
